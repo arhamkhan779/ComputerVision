@@ -1,5 +1,4 @@
-opencv-python==4.6.0.66
-opencv-contrib-python
+opencv-python
 numpy
 pyzbar
 PIL
