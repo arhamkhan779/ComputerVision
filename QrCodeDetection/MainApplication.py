@@ -1,30 +1,41 @@
 import streamlit as st
-import cv2
-import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from pyzbar.pyzbar import decode
-
-# Function to convert OpenCV image to PIL image
-def opencv_to_pil(image):
-    if image is None or image.size == 0:
-        return None
-    return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-
-# Function to convert PIL image to OpenCV image
-def pil_to_opencv(image):
-    if image is None or image.size == 0:
-        return None
-    return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+import numpy as np
 
 # Function to resize image
-def resize_image(image, width=400):  # Smaller width for better UI fit
+def resize_image(image, width=400):
     if image is None:
         return None
-    height, original_width = image.shape[:2]
-    aspect_ratio = height / original_width
+    aspect_ratio = image.height / image.width
     new_height = int(width * aspect_ratio)
-    resized_image = cv2.resize(image, (width, new_height), interpolation=cv2.INTER_LINEAR)
+    resized_image = image.resize((width, new_height), Image.LANCZOS)
     return resized_image
+
+# Function to draw bounding boxes and text on image
+def draw_boxes_and_text(image, decoded_objects):
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()  # Use a default font
+
+    for obj in decoded_objects:
+        points = obj.polygon
+        if len(points) == 4:
+            pts = [(point.x, point.y) for point in points]
+        else:
+            # If the polygon is not a rectangle, we calculate the convex hull manually
+            hull = np.array([point for point in points], dtype=np.float32)
+            hull = np.vstack((hull, hull[0]))  # close the polygon
+            pts = [(int(point[0]), int(point[1])) for point in hull]
+
+        # Draw bounding box
+        draw.line(pts + [pts[0]], fill="green", width=2)
+
+        # Draw text
+        data = obj.data.decode('utf-8')
+        text_position = (pts[0][0], pts[0][1] - 10)
+        draw.text(text_position, data, fill="red", font=font)
+
+    return image
 
 # Streamlit UI
 st.set_page_config(page_title="QR Code Decoder", page_icon=":camera:", layout="wide")
@@ -86,40 +97,24 @@ if uploaded_file is not None:
     try:
         # Read and process the image
         image_pil = Image.open(uploaded_file).convert('RGB')  # Ensure the image is in RGB mode
-        image_opencv = pil_to_opencv(image_pil)
 
-        if image_opencv is None:
-            st.error("Error converting PIL image to OpenCV format.")
+        if image_pil is None:
+            st.error("Error opening the image file.")
         else:
             # Resize the image to a smaller width
-            image_opencv_resized = resize_image(image_opencv, width=400)
+            image_pil_resized = resize_image(image_pil, width=400)
 
             # Decode QR code
-            decoded_objects = decode(image_opencv_resized)
+            decoded_objects = decode(np.array(image_pil_resized))
 
-            # Create a markdown string for decoded data
-            decoded_text = ""
-            for obj in decoded_objects:
-                points = obj.polygon
-                if len(points) == 4:
-                    pts = np.array(points, dtype=np.int32)
-                    cv2.polylines(image_opencv_resized, [pts], True, (0, 255, 0), 2)
-                else:
-                    hull = cv2.convexHull(np.array(points, dtype=np.float32))
-                    cv2.polylines(image_opencv_resized, [np.array(hull, dtype=np.int32)], True, (0, 255, 0), 2)
-
-                # Draw text
-                data = obj.data.decode('utf-8')
-                decoded_text += f"Decoded Data: {data}\n"
-                cv2.putText(image_opencv_resized, data, (points[0].x, points[0].y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-            # Convert back to PIL for displaying in Streamlit
-            processed_image_pil = opencv_to_pil(image_opencv_resized)
+            # Draw boxes and text
+            processed_image_pil = draw_boxes_and_text(image_pil_resized, decoded_objects)
 
             if processed_image_pil is None:
-                st.error("Error converting processed image to PIL format.")
+                st.error("Error processing the image.")
             else:
                 # Display the image and text side-by-side
+                decoded_text = "\n".join([obj.data.decode('utf-8') for obj in decoded_objects])
                 col1, col2 = st.columns(2)
                 with col1:
                     st.image(processed_image_pil, caption='Processed Image', use_column_width=True)
